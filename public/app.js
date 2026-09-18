@@ -117,7 +117,7 @@ function bindLogin() {
  const btn = document.getElementById("login-submit");
  const err = document.getElementById("login-error");
  btn.disabled = true;
- btn.textContent = "Signing in...";
+ btn.textContent = "Signing in…";
  err.hidden = true;
  try {
  const res = await apiFetch("/api/admin/login", {
@@ -258,12 +258,12 @@ async function loadUsersData() {
  <td style="padding:10px;font-size:12px;">${expStr}</td>
  <td style="padding:10px;text-align:right;" class="key-actions">
  <button type="button" class="btn btn-secondary btn-small" data-action="add-time" data-key="${attrKey}">+30D</button>
- <button type="button" class="btn btn-secondary btn-small" data-action="toggle-freeze" data-key="${attrKey}" data-freeze="${k.is_frozen ? "0" : "1"}">${k.is_frozen ? "Unfreeze" : "Freeze"}</button>
- <button type="button" class="btn btn-secondary btn-small" title="Unfreeze key if frozen and reset freeze quota to 0" data-action="reset-freezes" data-key="${attrKey}">Reset Freezes</button>
- <button type="button" class="btn btn-secondary btn-small" data-action="revoke" data-key="${attrKey}">Revoke</button>
- ${k.bound_hwid ? `<button type="button" class="btn btn-secondary btn-small" style="color:#ef4444;" data-action="ban" data-key="${attrKey}" data-hwid="${attrHwid}" data-ip="${attrIp}">Ban</button>` : ""}
- <button type="button" class="btn btn-secondary btn-small" style="color:#f87171;" data-action="delete-key" data-key="${attrKey}">Delete</button>
- <button type="button" class="btn btn-primary btn-small" data-action="view-logs" data-key="${attrKey}">Logs</button>
+ <button type="button" class="btn btn-secondary btn-small" data-action="toggle-freeze" data-key="${attrKey}" data-freeze="${k.is_frozen ? "0" : "1"}">${k.is_frozen ? "🔥 Unfreeze" : "🧊 Freeze"}</button>
+ <button type="button" class="btn btn-secondary btn-small" title="Unfreeze key if frozen and reset freeze quota to 0" data-action="reset-freezes" data-key="${attrKey}">🔄 Reset Freezes</button>
+ <button type="button" class="btn btn-secondary btn-small" data-action="revoke" data-key="${attrKey}">🚫 Revoke</button>
+ ${k.bound_hwid ? `<button type="button" class="btn btn-secondary btn-small" style="color:#ef4444;" data-action="ban" data-key="${attrKey}" data-hwid="${attrHwid}" data-ip="${attrIp}">⛔ Ban</button>` : ""}
+ <button type="button" class="btn btn-secondary btn-small" style="color:#f87171;" data-action="delete-key" data-key="${attrKey}">🗑️ Delete</button>
+ <button type="button" class="btn btn-primary btn-small" data-action="view-logs" data-key="${attrKey}">📋 Logs</button>
  </td>
  </tr>
  `;
@@ -401,7 +401,7 @@ async function adminViewLogs(key) {
  }
  let msg = `Activity Timeline Log for ${key}:\n\n`;
  logs.forEach(l => {
- msg += `[${l.timestamp}] ${l.username} - ${l.action}: ${l.details}\n`;
+ msg += `[${l.timestamp}] ${l.username} — ${l.action}: ${l.details}\n`;
  });
  alert(msg);
  } catch (e) { showToast("Failed to load user logs.", "error"); }
@@ -659,7 +659,7 @@ function setStorageSettingsExpanded(expanded) {
  const toggle = document.getElementById("btn-toggle-storage-settings");
  if (body) body.hidden = !expanded;
  if (summary) summary.hidden = expanded;
- if (chevron) chevron.textContent = expanded ? "v" : "";
+ if (chevron) chevron.textContent = expanded ? "▾" : "▸";
  if (toggle) toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
 }
 
@@ -670,7 +670,7 @@ function refreshStorageSettingsSummary(storage) {
  const cap = settings.soft_cap_mb ?? storage.soft_cap_mb ?? 500;
  const warn = settings.warn_mb ?? storage.warn_mb ?? 400;
  const crit = settings.crit_mb ?? storage.crit_mb ?? 480;
- el.textContent = `${cap} MB bucket - warn ${warn} MB - critical ${crit} MB`;
+ el.textContent = `${cap} MB bucket · warn ${warn} MB · critical ${crit} MB`;
 }
 
 function handleFileSelect(file) {
@@ -782,7 +782,7 @@ async function publishUpdate() {
  showToast(String(err.message || err || "Publish failed"), "error");
  } finally {
  btn.disabled = false;
- btn.innerHTML = '<span class="btn-icon"></span> Publish & Broadcast Update';
+ btn.innerHTML = '<span class="btn-icon">🚀</span> Publish & Broadcast Update';
  }
 }
 
@@ -806,7 +806,7 @@ function renderReleasesTable(releases, liveVersion) {
  const tbody = document.getElementById("releases-tbody");
  if (!tbody) return;
  if (!releases.length) {
- tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No releases yet - publish your first build above.</td></tr>';
+ tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No releases yet — publish your first build above.</td></tr>';
  return;
  }
  tbody.innerHTML = releases.map(r => {
