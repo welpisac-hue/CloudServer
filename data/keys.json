@@ -1,0 +1,23 @@
+{
+  "PULSE-D0F9-BAFF-1223": {
+    "key": "PULSE-D0F9-BAFF-1223",
+    "duration_days": 1,
+    "is_activated": true,
+    "activated_at": 1789700287.096026,
+    "expires_at": 1789786725.815279,
+    "is_frozen": false,
+    "freeze_count": 1,
+    "username": "Revile",
+    "bound_hwid": "BFEBFBFF-000706A1|a3b5241d-c0bb-4530-95f0-28b0a5e431f7|PHDPN00WBCO0VL",
+    "bound_serials": [
+      "f99c890e",
+      "3036056227394314"
+    ],
+    "bound_ip": "127.0.0.1",
+    "created_at": "2026-09-17 22:57:57",
+    "revoked": false,
+    "frozen_remaining_seconds": 86310,
+    "last_frozen_at": 1789700376.6322896,
+    "last_unfrozen_at": 1789700415.815279
+  }
+}

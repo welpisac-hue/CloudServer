@@ -1,0 +1,16 @@
+.env
+.env.local
+.env.*.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vercel/
+data/sessions.json
+data/login_attempts.json
+data/logs/
+public/downloads/*.exe
+!.gitkeep
+.DS_Store
+Thumbs.db
+*.log

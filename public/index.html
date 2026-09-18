@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse Optimizer — Control Panel & Update Hub</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Login Gate (shown until admin session is valid) -->
+  <div id="login-screen" class="login-screen" aria-live="polite">
+    <div class="login-backdrop"></div>
+    <form id="login-form" class="login-card" autocomplete="off">
+      <div class="login-brand">
+        <div class="logo-icon">⚡</div>
+        <h1>PULSE</h1>
+        <p>Control Panel Access</p>
+      </div>
+      <label class="login-label" for="login-username">Username</label>
+      <input id="login-username" class="login-input" type="text" name="username" autocomplete="username" spellcheck="false" required>
+      <label class="login-label" for="login-password">Password</label>
+      <input id="login-password" class="login-input" type="password" name="password" autocomplete="current-password" required>
+      <p id="login-error" class="login-error" hidden></p>
+      <button id="login-submit" class="btn btn-primary login-submit" type="submit">Sign In</button>
+      <p class="login-hint">Protected admin console · rate-limited · session locked</p>
+    </form>
+  </div>
+
+  <div id="app-root" class="app-container" hidden>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-icon">⚡</div>
+        <div class="brand-text">
+          <h2>PULSE</h2>
+          <span>CONTROL PANEL</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <a href="#dashboard" class="nav-item active" data-tab="dashboard">
+          <span class="nav-icon">📊</span> Overview
+        </a>
+        <a href="#publisher" class="nav-item" data-tab="publisher">
+          <span class="nav-icon">🚀</span> Release & Updates
+        </a>
+        <a href="#maintenance" class="nav-item" data-tab="maintenance">
+          <span class="nav-icon">🛡️</span> Tweak Maintenance
+        </a>
+        <a href="#users" class="nav-item" data-tab="users">
+          <span class="nav-icon">🔑</span> Users & Key Licenses
+        </a>
+        <a href="#config-editor" class="nav-item" data-tab="config-editor">
+          <span class="nav-icon">🔧</span> Raw Config & API
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="dot pulse-green"></span>
+          <span class="status-text" id="server-status-text">Checking server…</span>
+        </div>
+        <div class="api-target">
+          <code>GET /api/health</code>
+        </div>
+        <button id="btn-logout" class="btn btn-secondary btn-logout" type="button">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Header -->
+      <header class="top-header">
+        <div class="header-title">
+          <h1 id="page-title">Admin Dashboard</h1>
+          <p class="subtitle">Global application orchestrator, update distribution hub & tweak kill-switch manager</p>
+        </div>
+        <div class="header-actions">
+          <button id="btn-refresh" class="btn btn-secondary">
+            <span class="btn-icon">🔄</span> Sync Live Data
+          </button>
+          <div class="version-pill" id="live-version-pill">
+            <span class="pill-dot"></span>
+            <span class="pill-text">v2.1.1 Live</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- TAB: DASHBOARD OVERVIEW -->
+      <section id="tab-dashboard" class="tab-pane active">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">CURRENT PRODUCTION VERSION</span>
+              <span class="metric-icon">🏷️</span>
+            </div>
+            <div class="metric-value text-cyan" id="metric-version">v2.1.1</div>
+            <div class="metric-sub" id="metric-date">Released: Today</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">TWEAKS UNDER MAINTENANCE</span>
+              <span class="metric-icon">⚠️</span>
+            </div>
+            <div class="metric-value text-amber" id="metric-maintenance">0 Locked</div>
+            <div class="metric-sub">Across all connected clients</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">PACKAGED BINARIES</span>
+              <span class="metric-icon">📦</span>
+            </div>
+            <div class="metric-value text-purple" id="metric-releases">0 Builds</div>
+            <div class="metric-sub">Stored in /public/downloads/</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">INTEGRITY HASH (SHA-256)</span>
+              <span class="metric-icon">🔒</span>
+            </div>
+            <div class="metric-value-hash" id="metric-sha256">None Published</div>
+            <div class="metric-sub">Automated 5s verification check</div>
+          </div>
+        </div>
+
+        <div class="dashboard-sections-grid">
+          <!-- Quick Status & Quick Tweak Panel -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3>⚡ Quick Maintenance Summary</h3>
+              <button class="btn btn-small" onclick="switchTab('maintenance')">Manage All</button>
+            </div>
+            <div id="quick-maintenance-list" class="quick-list">
+              <div class="empty-state">All tweaks are currently active and available to clients.</div>
+            </div>
+          </div>
+
+          <!-- Active Release Notes Preview -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3>📝 Live Client Release Notes</h3>
+              <button class="btn btn-small" onclick="switchTab('publisher')">Deploy Update</button>
+            </div>
+            <div class="changelog-preview" id="dashboard-changelog-preview">
+              Loading changelog...
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: RELEASE & UPDATES -->
+      <section id="tab-publisher" class="tab-pane">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h2>🚀 Deploy New Binary Update</h2>
+              <p class="subtitle">Drop a compiled <code>.exe</code> file to publish an instant update notice to all running desktop applications.</p>
+            </div>
+          </div>
+
+          <form id="upload-form" class="publisher-form">
+            <!-- Drag and drop box -->
+            <div class="drop-zone" id="drop-zone">
+              <input type="file" id="file-input" name="file" accept=".exe" class="file-input-hidden">
+              <div class="drop-zone-content">
+                <div class="drop-icon">📥</div>
+                <h3>Drag & Drop <code>PulseHardwareMonitor.exe</code> here</h3>
+                <p>or click to browse your file system</p>
+                <div class="file-details" id="file-details" style="display: none;">
+                  <span class="badge badge-file" id="selected-file-name">file.exe</span>
+                  <span class="file-size" id="selected-file-size">0 MB</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Calculated Client-side Hash -->
+            <div class="hash-calc-container" id="hash-preview-container" style="display: none;">
+              <div class="hash-header">
+                <span>🔐 Computed SHA-256 Checksum:</span>
+                <span id="hash-status-badge" class="badge badge-green">Ready</span>
+              </div>
+              <code id="calculated-sha256">Computing...</code>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="version-input">Target Version (SemVer)</label>
+                <input type="text" id="version-input" name="version" placeholder="e.g. 2.1.1" class="input-text" required>
+                <small class="form-hint">Must be higher than client version (e.g. current: <span id="current-version-hint">2.1.1</span>) to trigger update prompts.</small>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="changelog-header-row">
+                <label for="changelog-input">Release Changelog / Patch Notes</label>
+                <div class="quick-format-btns">
+                  <button type="button" class="btn btn-tiny" onclick="insertBullet('• ')">+ Bullet</button>
+                  <button type="button" class="btn btn-tiny" onclick="insertTemplate()">Insert Template</button>
+                </div>
+              </div>
+              <textarea id="changelog-input" name="changelog" rows="6" class="textarea" placeholder="• Performance optimization&#10;• Bug fixes and timer stability" required></textarea>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" id="btn-publish" class="btn btn-primary btn-large">
+                <span class="btn-icon">🚀</span> Publish & Broadcast Update
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- TAB: TWEAK MAINTENANCE KILL-SWITCHES -->
+      <section id="tab-maintenance" class="tab-pane">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h2>🛡️ Remote Optimization Kill-Switches</h2>
+              <p class="subtitle">Disabling a tweak instantly locks it on desktop clients, greys out the switch, and displays <code>⚠️ UNDER MAINTENANCE</code>.</p>
+            </div>
+            <div class="maintenance-actions">
+              <button class="btn btn-secondary btn-small" id="btn-enable-all">Enable All</button>
+              <button class="btn btn-danger btn-small" id="btn-lock-all">Lock All</button>
+            </div>
+          </div>
+
+          <div class="tweaks-grid" id="tweaks-grid">
+            <!-- Dynamically populated by app.js -->
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: USERS & KEY LICENSES -->
+      <section id="tab-users" class="tab-pane">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h2>🔑 Product Key Generator & User License Manager</h2>
+              <p class="subtitle">Generate keys, track HWID locks, extend subscriptions, freeze keys, and audit live user activity logs.</p>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="key-duration-select">Key Subscription Duration</label>
+              <select id="key-duration-select" class="input-text">
+                <option value="1">1 Day (24 Hours Trial)</option>
+                <option value="7">7 Days (Weekly Pass)</option>
+                <option value="30" selected>30 Days (Monthly Pass)</option>
+                <option value="365">365 Days (Annual VIP)</option>
+                <option value="0">Lifetime (Infinite Access)</option>
+              </select>
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end;">
+              <button id="btn-generate-key" class="btn btn-primary btn-large">
+                <span class="btn-icon">🔑</span> Generate Product Key
+              </button>
+            </div>
+          </div>
+
+          <div class="hash-calc-container" id="generated-key-container" style="display: none;">
+            <div class="hash-header">
+              <span>🎉 Newly Generated Key (Unactivated until user redeems in app):</span>
+              <span class="badge badge-green">Ready for User</span>
+            </div>
+            <code id="generated-key-display" style="font-size:16px;font-weight:bold;">PULSE-XXXX-XXXX-XXXX</code>
+          </div>
+
+          <h3 style="margin-top:24px;margin-bottom:12px;color:#fff;">Registered User Profiles & Keys</h3>
+          <div class="quick-list" id="users-table-container">
+            <div class="empty-state">No keys or user activations recorded yet.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: RAW CONFIG & API -->
+      <section id="tab-config-editor" class="tab-pane">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h2>🔧 Raw Configuration & REST API Endpoint</h2>
+              <p class="subtitle">Live response served to desktop clients querying <code>GET /api/config</code></p>
+            </div>
+            <button id="btn-save-raw" class="btn btn-primary btn-small">💾 Save Raw JSON</button>
+          </div>
+
+          <div class="code-editor-wrapper">
+            <textarea id="raw-json-editor" class="code-editor" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast notification element -->
+  <div id="toast" class="toast">Action completed successfully</div>
+
+  <script src="app.js"></script>
+</body>
+</html>
