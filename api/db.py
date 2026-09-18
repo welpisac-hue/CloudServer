@@ -46,9 +46,23 @@ DEFAULT_CONFIG = {
     "mandatory": True,
 }
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_local_dirs() -> None:
+    """Create local data folders when the filesystem is writable.
+
+    On Vercel the deploy tree is read-only (only /tmp is writable). Eager
+    mkdir at import previously crashed the whole serverless function with
+    FUNCTION_INVOCATION_FAILED. Production persistence must use Supabase.
+    """
+    if os.environ.get("VERCEL"):
+        return
+    for path in (DATA_DIR, LOGS_DIR, UPLOADS_DIR):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+
+_ensure_local_dirs()
 
 
 def _supabase_configured() -> bool:
