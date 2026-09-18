@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pulse Optimizer — Control Panel & Update Hub</title>
+  <title>Pulse Optimizer - Control Panel & Update Hub</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,7 +15,7 @@
     <div class="login-backdrop"></div>
     <form id="login-form" class="login-card" autocomplete="off">
       <div class="login-brand">
-        <div class="logo-icon">⚡</div>
+        <div class="logo-icon">P</div>
         <h1>PULSE</h1>
         <p>Control Panel Access</p>
       </div>
@@ -25,11 +25,11 @@
       <input id="login-password" class="login-input" type="password" name="password" autocomplete="current-password" required>
       <p id="login-error" class="login-error" hidden></p>
       <button id="login-submit" class="btn btn-primary login-submit" type="submit">Sign In</button>
-      <p class="login-hint">Protected admin console · rate-limited · session locked</p>
+      <p class="login-hint">Protected admin console - rate-limited - session locked</p>
     </form>
   </div>
 
-  <!-- Global storage warning — sits above the entire authenticated app -->
+  <!-- Global storage warning - sits above the entire authenticated app -->
   <div id="storage-alert-banner" class="storage-alert-banner" hidden role="alert">
     <div class="storage-alert-inner">
       <div class="storage-alert-copy">
@@ -45,7 +45,7 @@
       <div class="storage-alert-actions">
         <button type="button" class="btn btn-small btn-secondary" id="btn-storage-goto">Manage Releases</button>
         <button type="button" class="btn btn-small btn-danger" id="btn-storage-purge">Purge Old Builds</button>
-        <button type="button" class="btn btn-tiny storage-alert-dismiss" id="btn-storage-dismiss" aria-label="Dismiss">✕</button>
+        <button type="button" class="btn btn-tiny storage-alert-dismiss" id="btn-storage-dismiss" aria-label="Dismiss">x</button>
       </div>
     </div>
   </div>
@@ -54,7 +54,7 @@
     <!-- Sidebar Navigation -->
     <aside class="sidebar">
       <div class="brand">
-        <div class="logo-icon">⚡</div>
+        <div class="logo-icon">P</div>
         <div class="brand-text">
           <h2>PULSE</h2>
           <span>CONTROL PANEL</span>
@@ -63,26 +63,26 @@
 
       <nav class="nav-menu">
         <a href="#dashboard" class="nav-item active" data-tab="dashboard">
-          <span class="nav-icon">📊</span> Overview
+          <span class="nav-icon"></span> Overview
         </a>
         <a href="#publisher" class="nav-item" data-tab="publisher">
-          <span class="nav-icon">🚀</span> Release & Updates
+          <span class="nav-icon"></span> Release & Updates
         </a>
         <a href="#maintenance" class="nav-item" data-tab="maintenance">
-          <span class="nav-icon">🛡️</span> Tweak Maintenance
+          <span class="nav-icon"></span> Tweak Maintenance
         </a>
         <a href="#users" class="nav-item" data-tab="users">
-          <span class="nav-icon">🔑</span> Users & Key Licenses
+          <span class="nav-icon"></span> Users & Key Licenses
         </a>
         <a href="#config-editor" class="nav-item" data-tab="config-editor">
-          <span class="nav-icon">🔧</span> Raw Config & API
+          <span class="nav-icon"></span> Raw Config & API
         </a>
       </nav>
 
       <div class="sidebar-footer">
         <div class="status-indicator">
           <span class="dot pulse-green"></span>
-          <span class="status-text" id="server-status-text">Checking server…</span>
+          <span class="status-text" id="server-status-text">Checking server...</span>
         </div>
         <div class="api-target">
           <code>GET /api/health</code>
@@ -101,7 +101,7 @@
         </div>
         <div class="header-actions">
           <button id="btn-refresh" class="btn btn-secondary">
-            <span class="btn-icon">🔄</span> Sync Live Data
+            <span class="btn-icon"></span> Sync Live Data
           </button>
           <div class="version-pill" id="live-version-pill">
             <span class="pill-dot"></span>
@@ -116,7 +116,7 @@
           <div class="metric-card">
             <div class="metric-header">
               <span class="metric-label">CURRENT PRODUCTION VERSION</span>
-              <span class="metric-icon">🏷️</span>
+              <span class="metric-icon"></span>
             </div>
             <div class="metric-value text-cyan" id="metric-version">v1.0.0</div>
             <div class="metric-sub" id="metric-date">Released: Today</div>
@@ -125,7 +125,7 @@
           <div class="metric-card">
             <div class="metric-header">
               <span class="metric-label">TWEAKS UNDER MAINTENANCE</span>
-              <span class="metric-icon">⚠️</span>
+              <span class="metric-icon"></span>
             </div>
             <div class="metric-value text-amber" id="metric-maintenance">0 Locked</div>
             <div class="metric-sub">Across all connected clients</div>
@@ -134,7 +134,7 @@
           <div class="metric-card">
             <div class="metric-header">
               <span class="metric-label">PACKAGED BINARIES</span>
-              <span class="metric-icon">📦</span>
+              <span class="metric-icon"></span>
             </div>
             <div class="metric-value text-purple" id="metric-releases">0 Builds</div>
             <div class="metric-sub">Stored in /public/downloads/</div>
@@ -143,7 +143,7 @@
           <div class="metric-card">
             <div class="metric-header">
               <span class="metric-label">INTEGRITY HASH (SHA-256)</span>
-              <span class="metric-icon">🔒</span>
+              <span class="metric-icon"></span>
             </div>
             <div class="metric-value-hash" id="metric-sha256">None Published</div>
             <div class="metric-sub">Automated 5s verification check</div>
@@ -154,8 +154,8 @@
           <!-- Quick Status & Quick Tweak Panel -->
           <div class="panel-card">
             <div class="panel-header">
-              <h3>⚡ Quick Maintenance Summary</h3>
-              <button class="btn btn-small" onclick="switchTab('maintenance')">Manage All</button>
+              <h3>Quick Maintenance Summary</h3>
+              <button type="button" class="btn btn-small" data-action="switch-tab" data-tab="maintenance">Manage All</button>
             </div>
             <div id="quick-maintenance-list" class="quick-list">
               <div class="empty-state">All tweaks are currently active and available to clients.</div>
@@ -165,8 +165,8 @@
           <!-- Active Release Notes Preview -->
           <div class="panel-card">
             <div class="panel-header">
-              <h3>📝 Live Client Release Notes</h3>
-              <button class="btn btn-small" onclick="switchTab('publisher')">Deploy Update</button>
+              <h3>Live Client Release Notes</h3>
+              <button type="button" class="btn btn-small" data-action="switch-tab" data-tab="publisher">Deploy Update</button>
             </div>
             <div class="changelog-preview" id="dashboard-changelog-preview">
               Loading changelog...
@@ -190,15 +190,15 @@
             <div class="live-channel-grid">
               <div class="live-stat">
                 <span class="live-stat-label">Version</span>
-                <span class="live-stat-value" id="pub-live-version">—</span>
+                <span class="live-stat-value" id="pub-live-version">-</span>
               </div>
               <div class="live-stat">
                 <span class="live-stat-label">Released</span>
-                <span class="live-stat-value" id="pub-live-date">—</span>
+                <span class="live-stat-value" id="pub-live-date">-</span>
               </div>
               <div class="live-stat">
                 <span class="live-stat-label">Package Size</span>
-                <span class="live-stat-value" id="pub-live-size">—</span>
+                <span class="live-stat-value" id="pub-live-size">-</span>
               </div>
               <div class="live-stat">
                 <span class="live-stat-label">Mandatory</span>
@@ -206,8 +206,8 @@
               </div>
             </div>
             <div class="live-channel-meta">
-              <div class="meta-row"><span>SHA-256</span><code id="pub-live-sha">—</code></div>
-              <div class="meta-row"><span>Download URL</span><code id="pub-live-url">—</code></div>
+              <div class="meta-row"><span>SHA-256</span><code id="pub-live-sha">-</code></div>
+              <div class="meta-row"><span>Download URL</span><code id="pub-live-url">-</code></div>
             </div>
             <div class="live-changelog-box">
               <span class="live-stat-label">Live Changelog</span>
@@ -240,7 +240,7 @@
             <div class="storage-settings" id="storage-settings-panel">
               <button type="button" class="storage-settings-toggle" id="btn-toggle-storage-settings" aria-expanded="true">
                 <span>Bucket capacity & alerts</span>
-                <span class="storage-settings-chevron" id="storage-settings-chevron">▾</span>
+                <span class="storage-settings-chevron" id="storage-settings-chevron">v</span>
               </button>
               <div class="storage-settings-body" id="storage-settings-body">
                 <div class="storage-settings-grid">
@@ -291,7 +291,7 @@
             <div class="drop-zone" id="drop-zone">
               <input type="file" id="file-input" name="file" accept=".exe" class="file-input-hidden">
               <div class="drop-zone-content">
-                <div class="drop-icon">📥</div>
+                <div class="drop-icon"></div>
                 <h3>Drag & Drop <code>PulseHardwareMonitor.exe</code> here</h3>
                 <p>or click to browse your file system</p>
                 <div class="file-details" id="file-details" style="display: none;">
@@ -328,11 +328,11 @@
               <div class="changelog-header-row">
                 <label for="changelog-input">Release Changelog / Patch Notes</label>
                 <div class="quick-format-btns">
-                  <button type="button" class="btn btn-tiny" onclick="insertBullet('- ')">+ Bullet</button>
-                  <button type="button" class="btn btn-tiny" onclick="insertSection('Added')">+ Added</button>
-                  <button type="button" class="btn btn-tiny" onclick="insertSection('Improved')">+ Improved</button>
-                  <button type="button" class="btn btn-tiny" onclick="insertSection('Fixed')">+ Fixed</button>
-                  <button type="button" class="btn btn-tiny" onclick="insertSection('Notes')">+ Notes</button>
+                  <button type="button" class="btn btn-tiny" data-action="insert-bullet" data-prefix="- ">+ Bullet</button>
+                  <button type="button" class="btn btn-tiny" data-action="insert-section" data-section="Added">+ Added</button>
+                  <button type="button" class="btn btn-tiny" data-action="insert-section" data-section="Improved">+ Improved</button>
+                  <button type="button" class="btn btn-tiny" data-action="insert-section" data-section="Fixed">+ Fixed</button>
+                  <button type="button" class="btn btn-tiny" data-action="insert-section" data-section="Notes">+ Notes</button>
                 </div>
               </div>
               <div class="changelog-template-row">
@@ -351,19 +351,19 @@
                   <option value="auth">Auth / Licensing</option>
                   <option value="updater">Updater / Cloud Channel</option>
                 </select>
-                <button type="button" class="btn btn-secondary btn-tiny" onclick="insertTemplate()">Insert Template</button>
+                <button type="button" class="btn btn-secondary btn-tiny" data-action="insert-template">Insert Template</button>
               </div>
               <textarea id="changelog-input" name="changelog" rows="10" class="textarea changelog-textarea" placeholder="- Added something useful&#10;- Improved stability&#10;- Fixed a reported bug" required maxlength="4000"></textarea>
               <div class="changelog-meta-row">
-                <span class="form-hint">Use plain text bullets. Avoid emoji / markdown headings — the desktop app strips them for clean rendering.</span>
+                <span class="form-hint">Use plain text bullets. Avoid emoji / markdown headings - the desktop app strips them for clean rendering.</span>
                 <span id="changelog-char-count" class="changelog-char-count">0 / 4000</span>
               </div>
-              <div class="changelog-live-preview" id="changelog-live-preview">Preview will appear here…</div>
+              <div class="changelog-live-preview" id="changelog-live-preview">Preview will appear here...</div>
             </div>
 
             <div class="form-actions">
               <button type="submit" id="btn-publish" class="btn btn-primary btn-large">
-                <span class="btn-icon">🚀</span> Publish & Broadcast Update
+                <span class="btn-icon"></span> Publish & Broadcast Update
               </button>
             </div>
           </form>
@@ -389,7 +389,7 @@
                 </tr>
               </thead>
               <tbody id="releases-tbody">
-                <tr><td colspan="6" class="empty-state">No releases yet — publish your first build above.</td></tr>
+                <tr><td colspan="6" class="empty-state">No releases yet - publish your first build above.</td></tr>
               </tbody>
             </table>
           </div>
@@ -401,8 +401,8 @@
         <div class="panel-card">
           <div class="panel-header">
             <div>
-              <h2>🛡️ Remote Optimization Kill-Switches</h2>
-              <p class="subtitle">Disabling a tweak instantly locks it on desktop clients, greys out the switch, and displays <code>⚠️ UNDER MAINTENANCE</code>.</p>
+              <h2> Remote Optimization Kill-Switches</h2>
+              <p class="subtitle">Disabling a tweak instantly locks it on desktop clients, greys out the switch, and displays <code> UNDER MAINTENANCE</code>.</p>
             </div>
             <div class="maintenance-actions">
               <button class="btn btn-secondary btn-small" id="btn-enable-all">Enable All</button>
@@ -421,7 +421,7 @@
         <div class="panel-card">
           <div class="panel-header">
             <div>
-              <h2>🔑 Product Key Generator & User License Manager</h2>
+              <h2> Product Key Generator & User License Manager</h2>
               <p class="subtitle">Generate keys, track HWID locks, extend subscriptions, freeze keys, and audit live user activity logs.</p>
             </div>
           </div>
@@ -439,14 +439,14 @@
             </div>
             <div class="form-group" style="display:flex;align-items:flex-end;">
               <button id="btn-generate-key" class="btn btn-primary btn-large">
-                <span class="btn-icon">🔑</span> Generate Product Key
+                <span class="btn-icon"></span> Generate Product Key
               </button>
             </div>
           </div>
 
           <div class="hash-calc-container" id="generated-key-container" style="display: none;">
             <div class="hash-header">
-              <span>🎉 Newly Generated Key (Unactivated until user redeems in app):</span>
+              <span> Newly Generated Key (Unactivated until user redeems in app):</span>
               <span class="badge badge-green">Ready for User</span>
             </div>
             <code id="generated-key-display" style="font-size:16px;font-weight:bold;">PULSE-XXXX-XXXX-XXXX</code>
@@ -464,10 +464,10 @@
         <div class="panel-card">
           <div class="panel-header">
             <div>
-              <h2>🔧 Raw Configuration & REST API Endpoint</h2>
+              <h2> Raw Configuration & REST API Endpoint</h2>
               <p class="subtitle">Live response served to desktop clients querying <code>GET /api/config</code></p>
             </div>
-            <button id="btn-save-raw" class="btn btn-primary btn-small">💾 Save Raw JSON</button>
+            <button id="btn-save-raw" class="btn btn-primary btn-small"> Save Raw JSON</button>
           </div>
 
           <div class="code-editor-wrapper">

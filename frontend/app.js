@@ -1,6 +1,6 @@
-﻿/* ==========================================================
-   PULSE OPTIMIZER â€” Control Panel Frontend
-   app.js â€” Main application logic
+/* ==========================================================
+   PULSE OPTIMIZER - Control Panel Frontend
+   app.js - Main application logic
    ========================================================== */
 
 "use strict";
@@ -22,7 +22,7 @@ function setAdminToken(token) {
   } catch (_) { /* private mode / blocked storage */ }
 }
 
-/** Authenticated fetch — cookies + Bearer token fallback */
+/** Authenticated fetch - cookies + Bearer token fallback */
 async function apiFetch(url, options = {}) {
   const opts = { credentials: "include", ...options };
   opts.headers = { ...(options.headers || {}) };
@@ -122,7 +122,7 @@ function bindLogin() {
     const btn = document.getElementById("login-submit");
     const err = document.getElementById("login-error");
     btn.disabled = true;
-    btn.textContent = "Signing inâ€¦";
+    btn.textContent = "Signing in...";
     err.hidden = true;
     try {
       const res = await apiFetch("/api/admin/login", {
@@ -247,9 +247,9 @@ async function loadUsersData() {
       const safeUser = escapeHtml(k.username || "");
       const safeHwid = escapeHtml((k.bound_hwid || "").slice(0, 14));
       const safeKey = escapeHtml(k.key);
-      const jsKey = escapeJsString(k.key);
-      const jsHwid = escapeJsString(k.bound_hwid || "");
-      const jsIp = escapeJsString(k.bound_ip || "");
+      const attrKey = escapeAttr(k.key);
+      const attrHwid = escapeAttr(k.bound_hwid || "");
+      const attrIp = escapeAttr(k.bound_ip || "");
       const userStr = k.username
         ? `<b>${safeUser}</b><br><span style="font-size:11px;color:#64748b;">${safeHwid}...</span>`
         : `<span style="color:#64748b;">Not Redeemed Yet</span>`;
@@ -261,14 +261,14 @@ async function loadUsersData() {
           <td style="padding:10px;">${k.duration_days === 0 ? "Lifetime" : k.duration_days + " Days"}</td>
           <td style="padding:10px;"><span class="badge ${badgeClass}">${statusText}</span></td>
           <td style="padding:10px;font-size:12px;">${expStr}</td>
-          <td style="padding:10px;text-align:right;">
-            <button class="btn btn-secondary btn-small" onclick="adminAddTime('${jsKey}')">+30D</button>
-            <button class="btn btn-secondary btn-small" onclick="adminToggleFreeze('${jsKey}', ${!k.is_frozen})">${k.is_frozen ? "ðŸ”¥ Unfreeze" : "ðŸ§Š Freeze"}</button>
-            <button class="btn btn-secondary btn-small" title="Unfreeze key if frozen and reset freeze quota to 0" onclick="adminResetFreezes('${jsKey}')">ðŸ”„ Reset Freezes</button>
-            <button class="btn btn-secondary btn-small" onclick="adminRevoke('${jsKey}')">ðŸš« Revoke</button>
-            ${k.bound_hwid ? `<button class="btn btn-secondary btn-small" style="color:#ef4444;" onclick="adminBan('${jsKey}', '${jsHwid}', '${jsIp}')">â›” Ban</button>` : ""}
-            <button class="btn btn-secondary btn-small" style="color:#f87171;" onclick="adminDeleteKey('${jsKey}')">ðŸ—‘ï¸ Delete</button>
-            <button class="btn btn-primary btn-small" onclick="adminViewLogs('${jsKey}')">ðŸ“‹ Logs</button>
+          <td style="padding:10px;text-align:right;" class="key-actions">
+            <button type="button" class="btn btn-secondary btn-small" data-action="add-time" data-key="${attrKey}">+30D</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="toggle-freeze" data-key="${attrKey}" data-freeze="${k.is_frozen ? "0" : "1"}">${k.is_frozen ? "Unfreeze" : "Freeze"}</button>
+            <button type="button" class="btn btn-secondary btn-small" title="Unfreeze key if frozen and reset freeze quota to 0" data-action="reset-freezes" data-key="${attrKey}">Reset Freezes</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="revoke" data-key="${attrKey}">Revoke</button>
+            ${k.bound_hwid ? `<button type="button" class="btn btn-secondary btn-small" style="color:#ef4444;" data-action="ban" data-key="${attrKey}" data-hwid="${attrHwid}" data-ip="${attrIp}">Ban</button>` : ""}
+            <button type="button" class="btn btn-secondary btn-small" style="color:#f87171;" data-action="delete-key" data-key="${attrKey}">Delete</button>
+            <button type="button" class="btn btn-primary btn-small" data-action="view-logs" data-key="${attrKey}">Logs</button>
           </td>
         </tr>
       `;
@@ -284,27 +284,47 @@ async function loadUsersData() {
 
 function bindUsersManagement() {
   const btn = document.getElementById("btn-generate-key");
-  if (!btn) return;
-  btn.addEventListener("click", async () => {
-    const sel = document.getElementById("key-duration-select");
-    const days = parseInt(sel.value, 10);
-    try {
-      const res = await apiFetch("/api/admin/generate-key", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ duration_days: days })
-      });
-      const data = await res.json();
-      if (data.success) {
-        document.getElementById("generated-key-container").style.display = "block";
-        document.getElementById("generated-key-display").textContent = data.key.key;
-        showToast(`Key generated: ${data.key.key}`);
-        loadUsersData();
-      } else { showToast("Key generation failed.", "error"); }
-    } catch(err) { showToast("Network error during key generation.", "error"); }
-  });
+  if (btn && !btn.dataset.bound) {
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", async () => {
+      const sel = document.getElementById("key-duration-select");
+      const days = parseInt(sel.value, 10);
+      try {
+        const res = await apiFetch("/api/admin/generate-key", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ duration_days: days })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById("generated-key-container").style.display = "block";
+          document.getElementById("generated-key-display").textContent = data.key.key;
+          showToast(`Key generated: ${data.key.key}`);
+          loadUsersData();
+        } else { showToast("Key generation failed.", "error"); }
+      } catch (err) { showToast("Network error during key generation.", "error"); }
+    });
+  }
+
+  const container = document.getElementById("users-table-container");
+  if (container && !container.dataset.actionsBound) {
+    container.dataset.actionsBound = "1";
+    container.addEventListener("click", (e) => {
+      const btnEl = e.target.closest("[data-action]");
+      if (!btnEl || !container.contains(btnEl)) return;
+      const action = btnEl.getAttribute("data-action");
+      const key = btnEl.getAttribute("data-key") || "";
+      if (action === "add-time") adminAddTime(key);
+      else if (action === "toggle-freeze") adminToggleFreeze(key, btnEl.getAttribute("data-freeze") === "1");
+      else if (action === "reset-freezes") adminResetFreezes(key);
+      else if (action === "revoke") adminRevoke(key);
+      else if (action === "ban") adminBan(key, btnEl.getAttribute("data-hwid") || "", btnEl.getAttribute("data-ip") || "");
+      else if (action === "delete-key") adminDeleteKey(key);
+      else if (action === "view-logs") adminViewLogs(key);
+    });
+  }
 }
 
-window.adminAddTime = async function(key) {
+async function adminAddTime(key) {
   try {
     const res = await apiFetch("/api/admin/add-time", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -312,10 +332,10 @@ window.adminAddTime = async function(key) {
     });
     const data = await res.json();
     if (data.success) { showToast(`Added 30 days to ${key}`); loadUsersData(); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminToggleFreeze = async function(key, freeze) {
+async function adminToggleFreeze(key, freeze) {
   try {
     const res = await apiFetch("/api/admin/freeze-key", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -323,10 +343,10 @@ window.adminToggleFreeze = async function(key, freeze) {
     });
     const data = await res.json();
     if (data.success) { showToast(`Key ${key} ${freeze ? "Frozen" : "Unfrozen"}`); loadUsersData(); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminResetFreezes = async function(key) {
+async function adminResetFreezes(key) {
   if (!confirm(`Reset freeze quota for ${key} and unfreeze it if currently frozen?`)) return;
   try {
     const res = await apiFetch("/api/admin/reset-freezes", {
@@ -336,10 +356,10 @@ window.adminResetFreezes = async function(key) {
     const data = await res.json();
     if (data.success) { showToast(`Reset freezes & unfroze ${key}`); loadUsersData(); }
     else { showToast(data.error || "Failed to reset freezes.", "error"); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminDeleteKey = async function(key) {
+async function adminDeleteKey(key) {
   if (!confirm(`Are you sure you want to permanently DELETE key ${key} from the server? This cannot be undone.`)) return;
   try {
     const res = await apiFetch("/api/admin/delete-key", {
@@ -349,10 +369,10 @@ window.adminDeleteKey = async function(key) {
     const data = await res.json();
     if (data.success) { showToast(`Deleted key ${key}`); loadUsersData(); }
     else { showToast(data.error || "Failed to delete key.", "error"); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminRevoke = async function(key) {
+async function adminRevoke(key) {
   if (!confirm(`Are you sure you want to revoke key ${key}?`)) return;
   try {
     const res = await apiFetch("/api/admin/revoke-key", {
@@ -361,10 +381,10 @@ window.adminRevoke = async function(key) {
     });
     const data = await res.json();
     if (data.success) { showToast(`Revoked key ${key}`); loadUsersData(); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminBan = async function(key, hwid, ip) {
+async function adminBan(key, hwid, ip) {
   if (!confirm(`Are you sure you want to BAN HWID ${hwid}? This device will be safely self-cleaned and blocked.`)) return;
   try {
     const res = await apiFetch("/api/admin/ban-user", {
@@ -373,10 +393,10 @@ window.adminBan = async function(key, hwid, ip) {
     });
     const data = await res.json();
     if (data.success) { showToast(`Banned HWID ${hwid}`); loadUsersData(); }
-  } catch(e) { showToast("Action failed.", "error"); }
-};
+  } catch (e) { showToast("Action failed.", "error"); }
+}
 
-window.adminViewLogs = async function(key) {
+async function adminViewLogs(key) {
   try {
     const res = await apiFetch(`/api/admin/user-logs?key=${encodeURIComponent(key)}`);
     const logs = await res.json();
@@ -386,11 +406,11 @@ window.adminViewLogs = async function(key) {
     }
     let msg = `Activity Timeline Log for ${key}:\n\n`;
     logs.forEach(l => {
-      msg += `[${l.timestamp}] ${l.username} â€” ${l.action}: ${l.details}\n`;
+      msg += `[${l.timestamp}] ${l.username} - ${l.action}: ${l.details}\n`;
     });
     alert(msg);
-  } catch(e) { showToast("Failed to load user logs.", "error"); }
-};
+  } catch (e) { showToast("Failed to load user logs.", "error"); }
+}
 
 function bindNavigation() {
   document.querySelectorAll(".nav-item").forEach(link => {
@@ -398,6 +418,28 @@ function bindNavigation() {
       e.preventDefault();
       switchTab(link.dataset.tab);
     });
+  });
+
+  // CSP-safe replacements for former inline onclick handlers in HTML
+  document.querySelectorAll("[data-action='switch-tab']").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab") || "dashboard"));
+  });
+  document.querySelectorAll("[data-action='insert-bullet']").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => insertBullet(btn.getAttribute("data-prefix") || "- "));
+  });
+  document.querySelectorAll("[data-action='insert-section']").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => insertSection(btn.getAttribute("data-section") || "Added"));
+  });
+  document.querySelectorAll("[data-action='insert-template']").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => insertTemplate());
   });
 }
 
@@ -451,7 +493,7 @@ async function loadLiveData() {
 
 function updateMetrics(config, stats) {
   setText("metric-version", `v${config.version}`);
-  setText("metric-date", `Released: ${config.release_date || "â€”"}`);
+  setText("metric-date", `Released: ${config.release_date || "-"}`);
   setText("metric-maintenance", `${maintenanceTweaks.size} Locked`);
   setText("metric-releases", `${stats.total_releases} Build${stats.total_releases !== 1 ? "s" : ""}`);
   const hash = config.sha256;
@@ -472,7 +514,7 @@ function updateDashboardPanels(config) {
     list.innerHTML = [...maintenanceTweaks].sort((a,b)=>a-b).map(id => {
       const tw = TWEAKS.find(t => t.id === id);
       return `<div class="quick-item">
-        <span style="font-size:13px;font-weight:600;">#${id} â€” ${tw ? tw.name : "Tweak #" + id}</span>
+        <span style="font-size:13px;font-weight:600;">#${id} - ${tw ? tw.name : "Tweak #" + id}</span>
         <span class="badge badge-amber">Under Maintenance</span>
       </div>`;
     }).join("");
@@ -622,7 +664,7 @@ function setStorageSettingsExpanded(expanded) {
   const toggle = document.getElementById("btn-toggle-storage-settings");
   if (body) body.hidden = !expanded;
   if (summary) summary.hidden = expanded;
-  if (chevron) chevron.textContent = expanded ? "▾" : "▸";
+  if (chevron) chevron.textContent = expanded ? "v" : "";
   if (toggle) toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
 }
 
@@ -633,7 +675,7 @@ function refreshStorageSettingsSummary(storage) {
   const cap = settings.soft_cap_mb ?? storage.soft_cap_mb ?? 500;
   const warn = settings.warn_mb ?? storage.warn_mb ?? 400;
   const crit = settings.crit_mb ?? storage.crit_mb ?? 480;
-  el.textContent = `${cap} MB bucket · warn ${warn} MB · critical ${crit} MB`;
+  el.textContent = `${cap} MB bucket - warn ${warn} MB - critical ${crit} MB`;
 }
 
 function handleFileSelect(file) {
@@ -745,19 +787,19 @@ async function publishUpdate() {
     showToast(String(err.message || err || "Publish failed"), "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<span class="btn-icon">🚀</span> Publish & Broadcast Update';
+    btn.innerHTML = '<span class="btn-icon"></span> Publish & Broadcast Update';
   }
 }
 
 function updatePublisherPanels(config, releases, storage) {
   if (config) {
-    setText("pub-live-version", config.version ? `v${config.version}` : "—");
-    setText("pub-live-date", config.release_date || "—");
-    setText("pub-live-size", config.file_size ? formatBytes(config.file_size) : "—");
+    setText("pub-live-version", config.version ? `v${config.version}` : "-");
+    setText("pub-live-date", config.release_date || "-");
+    setText("pub-live-size", config.file_size ? formatBytes(config.file_size) : "-");
     setText("pub-live-mandatory", config.mandatory === false ? "Optional" : "Mandatory");
     const sha = config.sha256 || "";
-    setText("pub-live-sha", sha ? sha : "—");
-    setText("pub-live-url", config.download_url || "—");
+    setText("pub-live-sha", sha ? sha : "-");
+    setText("pub-live-url", config.download_url || "-");
     const cl = document.getElementById("pub-live-changelog");
     if (cl) cl.textContent = sanitizeChangelogClient(config.changelog || "") || "No release published yet.";
   }
@@ -769,15 +811,15 @@ function renderReleasesTable(releases, liveVersion) {
   const tbody = document.getElementById("releases-tbody");
   if (!tbody) return;
   if (!releases.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No releases yet — publish your first build above.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No releases yet - publish your first build above.</td></tr>';
     return;
   }
   tbody.innerHTML = releases.map(r => {
     const ver = r.version || "";
     const isLive = !!(r.is_active || ver === liveVersion);
     const sha = r.sha256 || "";
-    const shaShort = sha ? `${sha.slice(0, 10)}…${sha.slice(-6)}` : "—";
-    const size = r.file_size ? formatBytes(r.file_size) : "—";
+    const shaShort = sha ? `${sha.slice(0, 10)}...${sha.slice(-6)}` : "-";
+    const size = r.file_size ? formatBytes(r.file_size) : "-";
     const status = isLive
       ? '<span class="badge badge-green">LIVE</span>'
       : '<span class="badge badge-muted">Archived</span>';
@@ -789,7 +831,7 @@ function renderReleasesTable(releases, liveVersion) {
         </div>`;
     return `<tr>
       <td><strong>v${escapeHtml(ver)}</strong></td>
-      <td>${escapeHtml(r.release_date || "—")}</td>
+      <td>${escapeHtml(r.release_date || "-")}</td>
       <td>${escapeHtml(size)}</td>
       <td><code class="sha-cell" title="${escapeAttr(sha)}">${escapeHtml(shaShort)}</code></td>
       <td>${status}</td>
@@ -1005,7 +1047,7 @@ async function purgeReleases(keep) {
     _storageDismissedLevel = null;
     updatePublisherPanels(liveConfig, data.releases || [], data.storage);
     const removed = (data.removed || []).length;
-    showToast(removed ? `Purged ${removed} old build(s).` : "Nothing to purge — already within keep limit.");
+    showToast(removed ? `Purged ${removed} old build(s).` : "Nothing to purge - already within keep limit.");
   } catch (e) {
     showToast("Network error during purge.", "error");
   }
@@ -1023,7 +1065,7 @@ function bindConfigEditor() {
     const ed = document.getElementById("raw-json-editor");
     let parsed;
     try { parsed = JSON.parse(ed.value); }
-    catch(e) { showToast("Invalid JSON — fix syntax errors before saving.", "error"); return; }
+    catch(e) { showToast("Invalid JSON - fix syntax errors before saving.", "error"); return; }
     try {
       const res  = await apiFetch("/api/save-config", {
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(parsed)
@@ -1039,7 +1081,7 @@ function bindConfigEditor() {
   });
 }
 
-window.insertBullet = function(prefix) {
+function insertBullet(prefix) {
   const ta = document.getElementById("changelog-input");
   if (!ta) return;
   const s = ta.selectionStart, e = ta.selectionEnd;
@@ -1048,9 +1090,9 @@ window.insertBullet = function(prefix) {
   ta.selectionStart = ta.selectionEnd = s + insert.length;
   ta.focus();
   refreshChangelogPreview();
-};
+}
 
-window.insertSection = function(name) {
+function insertSection(name) {
   const ta = document.getElementById("changelog-input");
   if (!ta) return;
   const block = (ta.value && !ta.value.endsWith("\n") ? "\n" : "") + name + "\n- ";
@@ -1059,7 +1101,7 @@ window.insertSection = function(name) {
   ta.selectionStart = ta.selectionEnd = s + block.length;
   ta.focus();
   refreshChangelogPreview();
-};
+}
 
 const CHANGELOG_TEMPLATES = {
   patch: `Pulse Hardware Suite - Patch Notes
@@ -1189,9 +1231,9 @@ function sanitizeChangelogClient(raw) {
   s = s.replace(/^#{1,6}\s*/gm, "");
   s = s.replace(/[*_`]+/g, "");
   // Fancy bullets / dashes / quotes -> ASCII
-  s = s.replace(/^[ \t]*[•●▪◦·]\s*/gm, "- ");
-  s = s.replace(/[–—]/g, "-");
-  s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  s = s.replace(/^[ \t]*[-\u2022\u25CF\u25A0\u25E6\u00B7]\s*/gm, "- ");
+  s = s.replace(/[\u2013\u2014]/g, "-");
+  s = s.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
   // Drop control chars except newline/tab
   s = Array.from(s).filter(ch => ch === "\n" || ch === "\t" || ch.charCodeAt(0) >= 32).join("");
   s = s.replace(/\n{3,}/g, "\n\n");
@@ -1209,7 +1251,7 @@ function refreshChangelogPreview() {
   if (count) count.textContent = `${cleaned.length} / 4000`;
 }
 
-window.insertTemplate = function() {
+function insertTemplate() {
   const sel = document.getElementById("changelog-template");
   const key = sel ? sel.value : "";
   const tpl = CHANGELOG_TEMPLATES[key] || CHANGELOG_TEMPLATES.patch;
@@ -1218,7 +1260,7 @@ window.insertTemplate = function() {
   ta.value = sanitizeChangelogClient(tpl);
   refreshChangelogPreview();
   ta.focus();
-};
+}
 
 // Wire live preview once DOM is ready
 document.addEventListener("DOMContentLoaded", () => {
