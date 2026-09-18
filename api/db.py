@@ -23,14 +23,27 @@ KEYS_FILE = DATA_DIR / "keys.json"
 BANNED_FILE = DATA_DIR / "banned.json"
 SESSIONS_FILE = DATA_DIR / "sessions.json"
 LOGIN_ATTEMPTS_FILE = DATA_DIR / "login_attempts.json"
+RELEASES_FILE = DATA_DIR / "releases.json"
+STORAGE_SETTINGS_FILE = DATA_DIR / "storage_settings.json"
+
+# Soft storage limits — defaults; overridable via UI (persisted) or env
+_DEFAULT_STORAGE_SETTINGS = {
+    "soft_cap_bytes": int(os.environ.get("STORAGE_SOFT_CAP_BYTES", str(500 * 1024 * 1024))),
+    "warn_bytes": int(os.environ.get("STORAGE_WARN_BYTES", str(400 * 1024 * 1024))),
+    "crit_bytes": int(os.environ.get("STORAGE_CRIT_BYTES", str(480 * 1024 * 1024))),
+    "warn_count": int(os.environ.get("STORAGE_WARN_COUNT", "8")),
+    "crit_count": int(os.environ.get("STORAGE_CRIT_COUNT", "12")),
+}
 
 DEFAULT_CONFIG = {
-    "version": "2.1.1",
+    "version": "1.0.0",
     "download_url": "",
     "sha256": "",
-    "release_date": "2026-09-17",
-    "changelog": "- Pulse Optimizer v2.1.1\n- Auth polish, freeze lock fixes, and stability improvements",
+    "release_date": "",
+    "changelog": "- Pulse Hardware Suite v1.0.0\n- Initial public release",
     "maintenance_tweaks": [],
+    "file_size": 0,
+    "mandatory": True,
 }
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -102,7 +115,6 @@ def _sb_storage_upload(bucket: str, object_path: str, file_bytes: bytes, content
     except urllib.error.HTTPError as e:
         # Retry as PUT for overwrite
         if e.code in (400, 409):
-            req.get_method = lambda: "PUT"  # type: ignore
             req2 = urllib.request.Request(
                 url,
                 data=file_bytes,
@@ -119,7 +131,63 @@ def _sb_storage_upload(bucket: str, object_path: str, file_bytes: bytes, content
         else:
             raise RuntimeError(f"Storage upload failed ({e.code}): {e.read().decode('utf-8', errors='replace')}") from e
 
-    return f"{_sb_base()}/storage/v1/object/public/{bucket}/{object_path}"
+    return public_release_url(object_path)
+
+
+def public_release_url(object_path: str) -> str:
+    """Canonical public URL for a releases-bucket object."""
+    return f"{_sb_base()}/storage/v1/object/public/releases/{object_path.lstrip('/')}"
+
+
+def create_signed_upload_url(filename: str) -> dict:
+    """
+    Create a short-lived signed upload URL so the browser can PUT the .exe
+    straight to Supabase (bypasses Vercel request body size limits).
+    """
+    if not _supabase_configured():
+        raise RuntimeError("Signed uploads require Supabase")
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (filename or "").strip())
+    if not safe or ".." in safe:
+        raise RuntimeError("Invalid filename")
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = f"{_sb_base()}/storage/v1/object/upload/sign/releases/{safe}"
+    req = urllib.request.Request(
+        url,
+        data=b"{}",
+        method="POST",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Signed upload URL failed ({e.code}): {err}") from e
+
+    signed_path = data.get("url") or data.get("Url") or ""
+    token = data.get("token") or data.get("Token") or ""
+    if not signed_path:
+        raise RuntimeError(f"Signed upload response missing url: {data}")
+
+    if signed_path.startswith("http"):
+        upload_url = signed_path
+    else:
+        upload_url = f"{_sb_base()}/storage/v1{signed_path if signed_path.startswith('/') else '/' + signed_path}"
+    if token and "token=" not in upload_url:
+        sep = "&" if "?" in upload_url else "?"
+        upload_url = f"{upload_url}{sep}token={token}"
+
+    return {
+        "file_name": safe,
+        "upload_url": upload_url,
+        "public_url": public_release_url(safe),
+        "token": token,
+    }
 
 
 def _load_json(file_path: Path, default: Any) -> Any:
@@ -155,10 +223,15 @@ def load_config() -> dict:
                 "release_date": row.get("release_date") or "",
                 "changelog": row.get("changelog") or "",
                 "maintenance_tweaks": row.get("maintenance_tweaks") or [],
+                "file_size": int(row.get("file_size") or 0),
+                "mandatory": bool(row.get("mandatory") if row.get("mandatory") is not None else True),
             }
         save_config(DEFAULT_CONFIG)
         return dict(DEFAULT_CONFIG)
-    return _load_json(CONFIG_FILE, DEFAULT_CONFIG)
+    cfg = _load_json(CONFIG_FILE, DEFAULT_CONFIG)
+    cfg.setdefault("file_size", 0)
+    cfg.setdefault("mandatory", True)
+    return cfg
 
 
 def save_config(cfg: dict) -> None:
@@ -171,6 +244,8 @@ def save_config(cfg: dict) -> None:
             "release_date": cfg.get("release_date", ""),
             "changelog": cfg.get("changelog", ""),
             "maintenance_tweaks": cfg.get("maintenance_tweaks", []),
+            "file_size": int(cfg.get("file_size") or 0),
+            "mandatory": bool(cfg.get("mandatory", True)),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         _sb_request("POST", "app_config", body=payload, prefer="resolution=merge-duplicates,return=minimal")
@@ -487,11 +562,457 @@ def append_user_log(key: str, entry: dict) -> None:
     _save_json(log_file, logs)
 
 
-def count_releases() -> int:
+def _sb_storage_list(bucket: str, prefix: str = "") -> list[dict]:
+    """List objects in a Supabase Storage bucket."""
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = f"{_sb_base()}/storage/v1/object/list/{bucket}"
+    body = json.dumps({"prefix": prefix, "limit": 200, "offset": 0}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            if not raw:
+                return []
+            data = json.loads(raw.decode("utf-8"))
+            return data if isinstance(data, list) else []
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Storage list failed ({e.code}): {err}") from e
+
+
+def _sb_storage_delete(bucket: str, paths: list[str]) -> None:
+    if not paths:
+        return
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = f"{_sb_base()}/storage/v1/object/{bucket}"
+    body = json.dumps({"prefixes": paths}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="DELETE",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Storage delete failed ({e.code}): {err}") from e
+
+
+def list_release_history() -> list[dict]:
+    """Newest-first release history entries."""
     if _supabase_configured():
-        cfg = load_config()
-        return 1 if cfg.get("download_url") else 0
-    return len(list(UPLOADS_DIR.glob("*.exe")))
+        try:
+            rows = _sb_request(
+                "GET",
+                "release_history",
+                query={"select": "*", "order": "created_at.desc"},
+            ) or []
+            return [
+                {
+                    "id": r.get("id"),
+                    "version": r.get("version", ""),
+                    "download_url": r.get("download_url", ""),
+                    "sha256": r.get("sha256", ""),
+                    "release_date": r.get("release_date", ""),
+                    "changelog": r.get("changelog", ""),
+                    "file_name": r.get("file_name", ""),
+                    "file_size": int(r.get("file_size") or 0),
+                    "is_active": bool(r.get("is_active")),
+                    "created_at": r.get("created_at", ""),
+                }
+                for r in rows
+            ]
+        except RuntimeError:
+            # Table may not exist yet — fall through to empty
+            return []
+    entries = _load_json(RELEASES_FILE, [])
+    if not isinstance(entries, list):
+        entries = []
+    return sorted(entries, key=lambda e: e.get("created_at", ""), reverse=True)
+
+
+def append_release_history(entry: dict) -> dict:
+    """Record a published build and mark it active."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    record = {
+        "version": entry.get("version", ""),
+        "download_url": entry.get("download_url", ""),
+        "sha256": entry.get("sha256", ""),
+        "release_date": entry.get("release_date", ""),
+        "changelog": entry.get("changelog", ""),
+        "file_name": entry.get("file_name", ""),
+        "file_size": int(entry.get("file_size") or 0),
+        "is_active": True,
+        "created_at": now,
+    }
+    if _supabase_configured():
+        try:
+            # Clear prior active flags
+            _sb_request(
+                "PATCH",
+                "release_history",
+                body={"is_active": False},
+                query={"is_active": "eq.true"},
+                prefer="return=minimal",
+            )
+        except RuntimeError:
+            pass
+        try:
+            rows = _sb_request(
+                "POST",
+                "release_history",
+                body=record,
+                prefer="return=representation",
+            )
+            if isinstance(rows, list) and rows:
+                record["id"] = rows[0].get("id")
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Could not write release_history (run supabase/schema.sql): {e}"
+            ) from e
+        return record
+
+    entries = _load_json(RELEASES_FILE, [])
+    if not isinstance(entries, list):
+        entries = []
+    for e in entries:
+        e["is_active"] = False
+    record["id"] = int(time.time() * 1000)
+    entries.append(record)
+    _save_json(RELEASES_FILE, entries)
+    return record
+
+
+def get_release_by_version(version: str) -> dict | None:
+    version = (version or "").strip()
+    for entry in list_release_history():
+        if entry.get("version") == version:
+            return entry
+    return None
+
+
+def set_active_release(version: str) -> dict | None:
+    """Mark a historical release as active (used by rollback)."""
+    target = get_release_by_version(version)
+    if not target:
+        return None
+    if _supabase_configured():
+        try:
+            _sb_request(
+                "PATCH",
+                "release_history",
+                body={"is_active": False},
+                query={"is_active": "eq.true"},
+                prefer="return=minimal",
+            )
+            _sb_request(
+                "PATCH",
+                "release_history",
+                body={"is_active": True},
+                query={"version": f"eq.{version}"},
+                prefer="return=minimal",
+            )
+        except RuntimeError:
+            pass
+        return target
+    entries = _load_json(RELEASES_FILE, [])
+    for e in entries:
+        e["is_active"] = e.get("version") == version
+    _save_json(RELEASES_FILE, entries)
+    return target
+
+
+def delete_release_binary(file_name: str) -> bool:
+    """Delete a stored binary from local downloads or Supabase Storage."""
+    file_name = (file_name or "").strip()
+    if not file_name or "/" in file_name or "\\" in file_name:
+        return False
+    if _supabase_configured():
+        try:
+            _sb_storage_delete("releases", [file_name])
+            return True
+        except RuntimeError:
+            return False
+    path = UPLOADS_DIR / file_name
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def remove_release_from_history(version: str) -> bool:
+    version = (version or "").strip()
+    if not version:
+        return False
+    entry = get_release_by_version(version)
+    if not entry:
+        return False
+    if entry.get("is_active"):
+        return False  # never delete the live channel build via this path
+    if entry.get("file_name"):
+        delete_release_binary(entry["file_name"])
+    if _supabase_configured():
+        try:
+            _sb_request(
+                "DELETE",
+                "release_history",
+                query={"version": f"eq.{version}"},
+                prefer="return=minimal",
+            )
+            return True
+        except RuntimeError:
+            return False
+    entries = [e for e in _load_json(RELEASES_FILE, []) if e.get("version") != version]
+    _save_json(RELEASES_FILE, entries)
+    return True
+
+
+def purge_old_releases(keep: int = 3) -> dict:
+    """Keep the newest `keep` builds; delete older inactive binaries."""
+    keep = max(1, int(keep))
+    history = list_release_history()
+    kept = history[:keep]
+    removed = []
+    for entry in history[keep:]:
+        if entry.get("is_active"):
+            continue
+        ver = entry.get("version", "")
+        if remove_release_from_history(ver):
+            removed.append(ver)
+    return {"kept": [e.get("version") for e in kept], "removed": removed}
+
+
+def load_storage_settings() -> dict:
+    """Bucket capacity / warn thresholds (MB-editable in the panel)."""
+    if _supabase_configured():
+        try:
+            rows = _sb_request("GET", "panel_settings", query={"id": "eq.1", "select": "*"}) or []
+            if rows:
+                row = rows[0]
+                raw = {
+                    "soft_cap_bytes": int(row.get("soft_cap_bytes") or _DEFAULT_STORAGE_SETTINGS["soft_cap_bytes"]),
+                    "warn_bytes": int(row.get("warn_bytes") or _DEFAULT_STORAGE_SETTINGS["warn_bytes"]),
+                    "crit_bytes": int(row.get("crit_bytes") or _DEFAULT_STORAGE_SETTINGS["crit_bytes"]),
+                    "warn_count": int(row.get("warn_count") or _DEFAULT_STORAGE_SETTINGS["warn_count"]),
+                    "crit_count": int(row.get("crit_count") or _DEFAULT_STORAGE_SETTINGS["crit_count"]),
+                }
+            else:
+                raw = dict(_DEFAULT_STORAGE_SETTINGS)
+        except RuntimeError:
+            raw = dict(_DEFAULT_STORAGE_SETTINGS)
+    else:
+        raw = _load_json(STORAGE_SETTINGS_FILE, dict(_DEFAULT_STORAGE_SETTINGS))
+    if not isinstance(raw, dict):
+        raw = dict(_DEFAULT_STORAGE_SETTINGS)
+    out = dict(_DEFAULT_STORAGE_SETTINGS)
+    for key in ("soft_cap_bytes", "warn_bytes", "crit_bytes", "warn_count", "crit_count"):
+        if key in raw:
+            try:
+                out[key] = int(raw[key])
+            except (TypeError, ValueError):
+                pass
+    # Keep thresholds sane relative to each other
+    if out["soft_cap_bytes"] < 1024 * 1024:
+        out["soft_cap_bytes"] = 1024 * 1024
+    if out["warn_bytes"] > out["soft_cap_bytes"]:
+        out["warn_bytes"] = max(1024 * 1024, int(out["soft_cap_bytes"] * 0.8))
+    if out["crit_bytes"] > out["soft_cap_bytes"]:
+        out["crit_bytes"] = max(out["warn_bytes"], int(out["soft_cap_bytes"] * 0.95))
+    if out["crit_bytes"] < out["warn_bytes"]:
+        out["crit_bytes"] = out["warn_bytes"]
+    if out["warn_count"] < 1:
+        out["warn_count"] = 1
+    if out["crit_count"] < out["warn_count"]:
+        out["crit_count"] = out["warn_count"]
+    return out
+
+
+def save_storage_settings(settings: dict) -> dict:
+    """Persist editable bucket capacity settings and return normalized values."""
+    current = load_storage_settings()
+
+    def _as_bytes(value, fallback):
+        if value is None:
+            return fallback
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return fallback
+
+    # Accept either bytes or megabytes from the UI
+    if "soft_cap_mb" in settings:
+        soft = max(1, int(float(settings["soft_cap_mb"]))) * 1024 * 1024
+    else:
+        soft = _as_bytes(settings.get("soft_cap_bytes"), current["soft_cap_bytes"])
+
+    if "warn_mb" in settings:
+        warn = max(1, int(float(settings["warn_mb"]))) * 1024 * 1024
+    else:
+        warn = _as_bytes(settings.get("warn_bytes"), current["warn_bytes"])
+
+    if "crit_mb" in settings:
+        crit = max(1, int(float(settings["crit_mb"]))) * 1024 * 1024
+    else:
+        crit = _as_bytes(settings.get("crit_bytes"), current["crit_bytes"])
+
+    warn_count = _as_bytes(settings.get("warn_count"), current["warn_count"])
+    crit_count = _as_bytes(settings.get("crit_count"), current["crit_count"])
+
+    payload = {
+        "soft_cap_bytes": soft,
+        "warn_bytes": warn,
+        "crit_bytes": crit,
+        "warn_count": warn_count,
+        "crit_count": crit_count,
+    }
+
+    if _supabase_configured():
+        try:
+            _sb_request(
+                "POST",
+                "panel_settings",
+                body={
+                    "id": 1,
+                    **payload,
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
+        except RuntimeError:
+            # Table may not exist yet — still return normalized local values
+            pass
+    else:
+        _save_json(STORAGE_SETTINGS_FILE, payload)
+    return load_storage_settings()
+
+
+def get_storage_usage() -> dict:
+    """Aggregate release-bucket size and emit warn/critical flags."""
+    files: list[dict] = []
+    total_bytes = 0
+    limits = load_storage_settings()
+
+    if _supabase_configured():
+        try:
+            objects = _sb_storage_list("releases")
+            for obj in objects:
+                name = obj.get("name") or ""
+                if not name or name.endswith("/"):
+                    continue
+                meta = obj.get("metadata") or {}
+                size = int(meta.get("size") or obj.get("size") or 0)
+                files.append({
+                    "name": name,
+                    "size": size,
+                    "updated_at": obj.get("updated_at") or obj.get("created_at") or "",
+                })
+                total_bytes += size
+        except RuntimeError:
+            # Fall back to history sizes if storage list fails
+            for entry in list_release_history():
+                size = int(entry.get("file_size") or 0)
+                files.append({
+                    "name": entry.get("file_name") or entry.get("version", "unknown"),
+                    "size": size,
+                    "updated_at": entry.get("created_at", ""),
+                })
+                total_bytes += size
+    else:
+        for path in sorted(UPLOADS_DIR.glob("*.exe")):
+            size = path.stat().st_size
+            files.append({
+                "name": path.name,
+                "size": size,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime)),
+            })
+            total_bytes += size
+
+    file_count = len(files)
+    soft_cap = limits["soft_cap_bytes"]
+    warn_bytes = limits["warn_bytes"]
+    crit_bytes = limits["crit_bytes"]
+    warn_count = limits["warn_count"]
+    crit_count = limits["crit_count"]
+    pct = (total_bytes / soft_cap * 100.0) if soft_cap > 0 else 0.0
+
+    level = "ok"
+    message = ""
+    if total_bytes >= crit_bytes or file_count >= crit_count:
+        level = "critical"
+        message = (
+            f"Release storage is nearly full ({_fmt_bytes(total_bytes)} / {_fmt_bytes(soft_cap)}, "
+            f"{file_count} builds). Purge old versions soon or uploads will fail."
+        )
+    elif total_bytes >= warn_bytes or file_count >= warn_count:
+        level = "warning"
+        message = (
+            f"Release storage is filling up ({_fmt_bytes(total_bytes)} / {_fmt_bytes(soft_cap)}, "
+            f"{file_count} builds). Clear old versions when you can."
+        )
+
+    return {
+        "backend": backend_mode(),
+        "total_bytes": total_bytes,
+        "total_human": _fmt_bytes(total_bytes),
+        "soft_cap_bytes": soft_cap,
+        "soft_cap_human": _fmt_bytes(soft_cap),
+        "soft_cap_mb": round(soft_cap / (1024 * 1024), 1),
+        "warn_mb": round(warn_bytes / (1024 * 1024), 1),
+        "crit_mb": round(crit_bytes / (1024 * 1024), 1),
+        "percent_used": round(pct, 1),
+        "file_count": file_count,
+        "warn_bytes": warn_bytes,
+        "crit_bytes": crit_bytes,
+        "warn_count": warn_count,
+        "crit_count": crit_count,
+        "level": level,
+        "message": message,
+        "files": sorted(files, key=lambda f: f.get("size", 0), reverse=True),
+        "settings": {
+            "soft_cap_mb": round(soft_cap / (1024 * 1024), 1),
+            "warn_mb": round(warn_bytes / (1024 * 1024), 1),
+            "crit_mb": round(crit_bytes / (1024 * 1024), 1),
+            "warn_count": warn_count,
+            "crit_count": crit_count,
+        },
+    }
+
+
+def _fmt_bytes(n: int) -> str:
+    n = float(max(0, int(n or 0)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024.0 or unit == "GB":
+            if unit == "B":
+                return f"{int(n)} {unit}"
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} GB"
+
+
+def count_releases() -> int:
+    history = list_release_history()
+    if history:
+        return len(history)
+    usage = get_storage_usage()
+    if usage["file_count"]:
+        return usage["file_count"]
+    cfg = load_config()
+    return 1 if cfg.get("download_url") else 0
 
 
 def store_release_file(filename: str, file_data: bytes) -> str:

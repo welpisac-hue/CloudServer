@@ -1,2 +1,2 @@
-# No third-party packages required — stdlib only.
-# python-dotenv is optional; server.py parses .env itself.
+# Stdlib-only API (no pip packages required).
+# Kept non-empty so Vercel Python detects a valid requirements file.

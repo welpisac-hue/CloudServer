@@ -13,7 +13,11 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
+# Prefer editable frontend/ sources locally; public/ is the Vercel build output
+FRONTEND_DIR = BASE_DIR / "frontend"
 PUBLIC_DIR = BASE_DIR / "public"
+STATIC_DIR = FRONTEND_DIR if (FRONTEND_DIR / "index.html").exists() else PUBLIC_DIR
+DOWNLOADS_DIR = PUBLIC_DIR / "downloads"
 
 # Load local .env if present
 env_path = BASE_DIR / ".env"
@@ -36,7 +40,7 @@ PORT = int(os.environ.get("PORT", "3000"))
 
 class ControlPanelHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(PUBLIC_DIR), **kwargs)
+        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def log_message(self, fmt, *args):
         print(f"  [{self.address_string()}] {fmt % args}")
@@ -65,8 +69,24 @@ class ControlPanelHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if urlparse(self.path).path.startswith("/api/"):
+        path = urlparse(self.path).path
+        if path.startswith("/api/"):
             self._api()
+            return
+        # Local release binaries live under public/downloads even when UI is served from frontend/
+        if path.startswith("/downloads/"):
+            name = path[len("/downloads/"):]
+            if name and "/" not in name and "\\" not in name:
+                target = DOWNLOADS_DIR / name
+                if target.exists() and target.is_file():
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(target.stat().st_size))
+                    self.end_headers()
+                    with open(target, "rb") as f:
+                        self.wfile.write(f.read())
+                    return
+            self.send_error(404)
             return
         super().do_GET()
 

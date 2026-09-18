@@ -16,22 +16,31 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from db import (
+    append_release_history,
     append_user_log,
     backend_mode,
     clear_login_attempt,
     count_releases,
     create_session,
+    create_signed_upload_url,
     delete_key,
     delete_session,
+    get_release_by_version,
     get_session,
+    get_storage_usage,
+    list_release_history,
     load_banned,
     load_config,
     load_keys,
     load_login_attempts,
     load_user_logs,
+    purge_old_releases,
+    remove_release_from_history,
     save_banned,
     save_config,
     save_login_attempt,
+    save_storage_settings,
+    set_active_release,
     store_release_file,
     upsert_key,
 )
@@ -54,7 +63,14 @@ def _admin_password() -> str:
 
 
 def _session_secret() -> str:
-    return os.environ.get("SESSION_SECRET", "").strip() or secrets.token_hex(32)
+    secret = os.environ.get("SESSION_SECRET", "").strip()
+    if secret:
+        return secret
+    # On Vercel / production, refusing to mint a random secret per cold start
+    # (that would invalidate every session).
+    if os.environ.get("VERCEL") or os.environ.get("SUPABASE_URL"):
+        raise RuntimeError("SESSION_SECRET environment variable is required in production")
+    return secrets.token_hex(32)
 
 
 def _allowed_ips() -> set[str]:
@@ -62,6 +78,64 @@ def _allowed_ips() -> set[str]:
     if not raw:
         return set()
     return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _is_production() -> bool:
+    return bool(os.environ.get("VERCEL") or os.environ.get("NODE_ENV") == "production")
+
+
+def _safe_error(exc: Exception) -> str:
+    """Never leak internals to clients in production."""
+    if _is_production():
+        return "Internal server error"
+    return str(exc)
+
+
+def _cors_headers(request_headers: dict) -> dict:
+    """
+    Credentialed CORS must never use *. Echo Origin only when allowlisted,
+    or when CORS_ORIGIN is unset (same-origin / local reflect).
+    """
+    origin = (request_headers.get("Origin") or request_headers.get("origin") or "").strip()
+    configured = os.environ.get("CORS_ORIGIN", "").strip()
+    out: dict[str, str] = {
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "600",
+    }
+    if not origin:
+        return out
+
+    if not configured or configured == "*":
+        # Reflect request origin (needed for credentialed same-site tooling).
+        # Prefer setting CORS_ORIGIN to your exact Vercel URL in production.
+        out["Access-Control-Allow-Origin"] = origin
+        out["Access-Control-Allow-Credentials"] = "true"
+        out["Vary"] = "Origin"
+        return out
+
+    allowed = {o.strip() for o in configured.split(",") if o.strip()}
+    if origin in allowed:
+        out["Access-Control-Allow-Origin"] = origin
+        out["Access-Control-Allow-Credentials"] = "true"
+        out["Vary"] = "Origin"
+    return out
+
+
+PUBLIC_CONFIG_KEYS = (
+    "version",
+    "download_url",
+    "sha256",
+    "release_date",
+    "changelog",
+    "file_size",
+    "mandatory",
+    "maintenance_tweaks",
+)
+
+
+def _public_config(cfg: dict) -> dict:
+    return {k: cfg.get(k) for k in PUBLIC_CONFIG_KEYS}
 
 
 def get_freeze_limit(duration_days: int):
@@ -115,10 +189,31 @@ def _parse_cookies(cookie_header: str) -> dict:
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
-    try:
-        return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
-    except Exception:
-        return False
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def sanitize_changelog(text: str, max_len: int = 4000) -> str:
+    """Normalize changelog for desktop clients: plain text, no emoji/markdown junk."""
+    if not text:
+        return ""
+    s = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    # Drop emoji / dingbat ranges
+    s = re.sub(r"[\U0001F300-\U0001FAFF]", "", s)
+    s = re.sub(r"[\u2600-\u27BF]", "", s)
+    # Markdown headings / emphasis
+    s = re.sub(r"^#{1,6}\s*", "", s, flags=re.MULTILINE)
+    s = re.sub(r"[*_`]+", "", s)
+    # Fancy bullets / dashes / quotes
+    s = re.sub(r"^[ \t]*[•●▪◦·]\s*", "- ", s, flags=re.MULTILINE)
+    s = s.replace("–", "-").replace("—", "-")
+    s = s.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    # Control chars except newline/tab
+    s = "".join(ch for ch in s if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    s = s.strip()
+    if len(s) > max_len:
+        s = s[:max_len].rstrip() + "\n..."
+    return s
 
 
 def _client_ip(headers: dict, fallback: str = "") -> str:
@@ -175,23 +270,29 @@ def is_authenticated(headers: dict) -> bool:
     return True
 
 
-def _json_response(data: Any, status: int = 200, extra_headers: dict | None = None) -> tuple[int, dict, bytes]:
+def _json_response(
+    data: Any,
+    status: int = 200,
+    extra_headers: dict | None = None,
+    request_headers: dict | None = None,
+) -> tuple[int, dict, bytes]:
     body = json.dumps(data).encode("utf-8")
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": str(len(body)),
-        "Access-Control-Allow-Origin": os.environ.get("CORS_ORIGIN", "*"),
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "no-referrer",
         "Cache-Control": "no-store",
     }
+    headers.update(_cors_headers(request_headers if request_headers is not None else _CURRENT_REQ_HEADERS))
     if extra_headers:
         headers.update(extra_headers)
     return status, headers, body
+
+
+# Populated per-request in handle_request (used by _json_response CORS)
+_CURRENT_REQ_HEADERS: dict = {}
 
 
 def handle_request(
@@ -202,11 +303,13 @@ def handle_request(
     client_address: str = "0.0.0.0",
 ) -> tuple[int, dict, bytes]:
     """Dispatch one HTTP request. Returns (status, headers, body_bytes)."""
+    global _CURRENT_REQ_HEADERS
     method = method.upper()
     parsed = urlparse(path)
     route = parsed.path
     query = parse_qs(parsed.query)
     hdrs = {k: v for k, v in headers.items()}
+    _CURRENT_REQ_HEADERS = hdrs
     ip = _client_ip(hdrs, client_address)
 
     if method == "OPTIONS":
@@ -225,7 +328,7 @@ def handle_request(
             return _handle_post(route, hdrs, body, ip)
         return _json_response({"error": "Method not allowed"}, 405)
     except Exception as e:
-        return _json_response({"error": "Internal server error", "detail": str(e)}, 500)
+        return _json_response({"error": _safe_error(e)}, 500)
 
 
 def _require_admin(headers: dict, ip: str) -> tuple[int, dict, bytes] | None:
@@ -239,15 +342,27 @@ def _require_admin(headers: dict, ip: str) -> tuple[int, dict, bytes] | None:
 
 def _handle_get(route: str, query: dict, headers: dict, ip: str) -> tuple[int, dict, bytes]:
     if route in ("/api/health", "/api/ping"):
+        admin_ok = bool(_admin_username() and _admin_password())
+        secret_ok = bool(os.environ.get("SESSION_SECRET", "").strip())
         return _json_response({
             "ok": True,
             "service": "pulse-control-panel",
             "backend": backend_mode(),
             "time": datetime.datetime.utcnow().isoformat() + "Z",
+            "ready": {
+                "admin_credentials": admin_ok,
+                "session_secret": secret_ok,
+                "supabase": backend_mode() == "supabase",
+            },
         })
 
     if route == "/api/config":
-        return _json_response(load_config())
+        config = load_config()
+        # Always serve a desktop-safe changelog (covers old messy releases too)
+        if "changelog" in config:
+            config = dict(config)
+            config["changelog"] = sanitize_changelog(config.get("changelog", ""))
+        return _json_response(_public_config(config))
 
     if route == "/api/admin/session":
         if is_authenticated(headers):
@@ -262,7 +377,7 @@ def _handle_get(route: str, query: dict, headers: dict, ip: str) -> tuple[int, d
         keys = load_keys()
         banned = load_banned()
         return _json_response({
-            "version": config.get("version", "2.1.1"),
+            "version": config.get("version", "1.0.0"),
             "release_date": config.get("release_date", ""),
             "maintenance_count": len(config.get("maintenance_tweaks", [])),
             "total_releases": count_releases(),
@@ -271,7 +386,9 @@ def _handle_get(route: str, query: dict, headers: dict, ip: str) -> tuple[int, d
             "total_banned": len(banned.get("hwids", [])),
             "sha256": config.get("sha256", ""),
             "download_url": config.get("download_url", ""),
+            "file_size": config.get("file_size", 0),
             "backend": backend_mode(),
+            "storage": get_storage_usage(),
         })
 
     if route.startswith("/api/admin/"):
@@ -293,6 +410,33 @@ def _handle_get(route: str, query: dict, headers: dict, ip: str) -> tuple[int, d
         if route == "/api/admin/user-logs":
             key = (query.get("key") or [""])[0]
             return _json_response(load_user_logs(key))
+
+        if route == "/api/admin/releases":
+            config = load_config()
+            history = list_release_history()
+            # Soft-seed history from live config if the channel exists but history is empty
+            if not history and config.get("download_url"):
+                url = config.get("download_url", "")
+                file_name = url.rsplit("/", 1)[-1] if url else ""
+                history = [append_release_history({
+                    "version": config.get("version", ""),
+                    "download_url": url,
+                    "sha256": config.get("sha256", ""),
+                    "release_date": config.get("release_date", ""),
+                    "changelog": config.get("changelog", ""),
+                    "file_name": file_name,
+                    "file_size": int(config.get("file_size") or 0),
+                })]
+                history = list_release_history()
+            storage = get_storage_usage()
+            return _json_response({
+                "current": config,
+                "releases": history,
+                "storage": storage,
+            })
+
+        if route == "/api/admin/storage":
+            return _json_response(get_storage_usage())
 
     return _json_response({"error": "Endpoint not found"}, 404)
 
@@ -376,7 +520,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                     break
             return _json_response({"banned": is_banned, "reason": reason if is_banned else ""})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/auth/verify":
         try:
@@ -452,7 +596,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                 "expires_at_iso": expires_iso,
             })
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/user/set-username":
         try:
@@ -467,7 +611,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(key_str, k)
             return _json_response({"success": True, "username": username})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/user/freeze-key":
         try:
@@ -517,7 +661,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                 "freeze_count": k.get("freeze_count", 0),
             })
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/user/log":
         try:
@@ -533,13 +677,99 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             })
             return _json_response({"success": True})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     # ---- Admin-only below ----
     if route.startswith("/api/admin/") or route in ("/api/maintenance", "/api/save-config", "/api/publish-update"):
         denied = _require_admin(headers, ip)
         if denied:
             return denied
+
+    if route == "/api/admin/rollback":
+        try:
+            data = json.loads(body or b"{}")
+            version = str(data.get("version", "")).strip()
+            if not version:
+                return _json_response({"error": "version is required"}, 400)
+            entry = get_release_by_version(version)
+            if not entry:
+                return _json_response({"error": f"No release found for v{version}"}, 404)
+            if not entry.get("download_url"):
+                return _json_response({"error": "Release has no download URL — cannot roll back"}, 400)
+
+            config = load_config()
+            config["version"] = entry.get("version", version)
+            config["download_url"] = entry.get("download_url", "")
+            config["sha256"] = entry.get("sha256", "")
+            config["changelog"] = sanitize_changelog(entry.get("changelog", ""))
+            config["release_date"] = entry.get("release_date") or datetime.date.today().isoformat()
+            config["file_size"] = int(entry.get("file_size") or 0)
+            config["mandatory"] = True
+            save_config(config)
+            set_active_release(version)
+            storage = get_storage_usage()
+            return _json_response({
+                "success": True,
+                "config": config,
+                "rolled_back_to": version,
+                "releases": list_release_history(),
+                "storage": storage,
+            })
+        except Exception as e:
+            return _json_response({"error": _safe_error(e)}, 500)
+
+    if route == "/api/admin/delete-release":
+        try:
+            data = json.loads(body or b"{}")
+            version = str(data.get("version", "")).strip()
+            if not version:
+                return _json_response({"error": "version is required"}, 400)
+            cfg = load_config()
+            if cfg.get("version") == version:
+                return _json_response({"error": "Cannot delete the currently live version. Rollback first."}, 400)
+            ok = remove_release_from_history(version)
+            if not ok:
+                return _json_response({"error": "Could not delete release (missing or still active)"}, 400)
+            return _json_response({
+                "success": True,
+                "deleted": version,
+                "releases": list_release_history(),
+                "storage": get_storage_usage(),
+            })
+        except Exception as e:
+            return _json_response({"error": _safe_error(e)}, 500)
+
+    if route == "/api/admin/purge-releases":
+        try:
+            data = json.loads(body or b"{}")
+            keep = int(data.get("keep", 3))
+            result = purge_old_releases(keep=keep)
+            return _json_response({
+                "success": True,
+                **result,
+                "releases": list_release_history(),
+                "storage": get_storage_usage(),
+            })
+        except Exception as e:
+            return _json_response({"error": _safe_error(e)}, 500)
+
+    if route == "/api/admin/storage-settings":
+        try:
+            data = json.loads(body or b"{}")
+            saved = save_storage_settings(data if isinstance(data, dict) else {})
+            return _json_response({
+                "success": True,
+                "settings": {
+                    "soft_cap_mb": round(saved["soft_cap_bytes"] / (1024 * 1024), 1),
+                    "warn_mb": round(saved["warn_bytes"] / (1024 * 1024), 1),
+                    "crit_mb": round(saved["crit_bytes"] / (1024 * 1024), 1),
+                    "warn_count": saved["warn_count"],
+                    "crit_count": saved["crit_count"],
+                },
+                "storage": get_storage_usage(),
+            })
+        except Exception as e:
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/generate-key":
         try:
@@ -565,7 +795,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(new_key, record)
             return _json_response({"success": True, "key": record})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/add-time":
         try:
@@ -585,7 +815,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(key_str, k)
             return _json_response({"success": True, "key": k})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/freeze-key":
         try:
@@ -606,7 +836,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(key_str, k)
             return _json_response({"success": True, "key": k})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/revoke-key":
         try:
@@ -620,7 +850,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(key_str, k)
             return _json_response({"success": True, "key": k})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/delete-key":
         try:
@@ -630,7 +860,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                 return _json_response({"error": "Key not found"}, 404)
             return _json_response({"success": True})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/reset-freezes":
         try:
@@ -652,7 +882,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             upsert_key(key_str, k)
             return _json_response({"success": True, "key": k})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/admin/ban-user":
         try:
@@ -673,7 +903,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                 upsert_key(key_str, k)
             return _json_response({"success": True, "banned": banned})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/maintenance":
         try:
@@ -685,7 +915,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
                 return _json_response({"success": True, "maintenance_tweaks": config["maintenance_tweaks"]})
             return _json_response({"error": "Expected maintenance_tweaks array"}, 400)
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/save-config":
         try:
@@ -693,13 +923,106 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             save_config(data)
             return _json_response({"success": True, "config": data})
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
+
+    if route == "/api/admin/prepare-upload":
+        """Return a signed Supabase upload URL so large .exe files bypass Vercel body limits."""
+        try:
+            data = json.loads(body or b"{}")
+            version = str(data.get("version", "")).strip()
+            if not version:
+                return _json_response({"error": "version is required"}, 400)
+            if not re.match(r"^[0-9]+(\.[0-9]+){1,3}[a-zA-Z0-9_-]*$", version):
+                return _json_response({"error": "Invalid version format"}, 400)
+            out_name = f"PulseOptimizer_v{version}.exe"
+            if backend_mode() != "supabase":
+                return _json_response({
+                    "success": True,
+                    "mode": "local",
+                    "file_name": out_name,
+                    "message": "Local mode — use multipart /api/publish-update",
+                })
+            signed = create_signed_upload_url(out_name)
+            return _json_response({"success": True, "mode": "supabase", **signed})
+        except Exception as e:
+            return _json_response({"error": _safe_error(e)}, 500)
 
     if route == "/api/publish-update":
         try:
             ct = headers.get("Content-Type") or headers.get("content-type") or ""
+
+            # ---- Path A: JSON finalize after direct-to-Supabase upload ----
+            if "application/json" in ct:
+                data = json.loads(body or b"{}")
+                version = str(data.get("version", "")).strip()
+                if not version:
+                    return _json_response({"error": "version is required"}, 400)
+                changelog = sanitize_changelog(str(data.get("changelog", "- Performance update")))
+                if not changelog:
+                    changelog = "- Performance update"
+                mandatory = str(data.get("mandatory", "true")).strip().lower() in ("1", "true", "yes", "on")
+                sha256_hash = str(data.get("sha256", "")).strip().lower()
+                if not re.match(r"^[a-f0-9]{64}$", sha256_hash):
+                    return _json_response({"error": "Valid sha256 (64 hex chars) is required"}, 400)
+                file_size = int(data.get("file_size") or 0)
+                out_name = str(data.get("file_name") or f"PulseOptimizer_v{version}.exe").strip()
+                if "/" in out_name or "\\" in out_name or ".." in out_name:
+                    return _json_response({"error": "Invalid file_name"}, 400)
+                download_url = str(data.get("download_url") or "").strip()
+                if not download_url:
+                    return _json_response({"error": "download_url is required for JSON publish"}, 400)
+                if not download_url.startswith("https://"):
+                    return _json_response({"error": "download_url must be https"}, 400)
+                if backend_mode() == "supabase":
+                    allowed_prefix = os.environ.get("SUPABASE_URL", "").rstrip("/") + "/storage/"
+                    if allowed_prefix.startswith("https://") and not download_url.startswith(allowed_prefix):
+                        return _json_response({"error": "download_url must point at this project's storage"}, 400)
+
+                storage = get_storage_usage()
+                if storage.get("level") == "critical":
+                    projected = storage["total_bytes"] + max(0, file_size)
+                    if projected > storage["soft_cap_bytes"]:
+                        return _json_response({
+                            "error": (
+                                "Release storage is full. Purge old builds before publishing. "
+                                + (storage.get("message") or "")
+                            ),
+                            "storage": storage,
+                        }, 507)
+
+                release_date = datetime.date.today().isoformat()
+                config = load_config()
+                config["version"] = version
+                config["changelog"] = changelog
+                config["download_url"] = download_url
+                config["sha256"] = sha256_hash
+                config["release_date"] = release_date
+                config["file_size"] = file_size
+                config["mandatory"] = mandatory
+                save_config(config)
+
+                history_entry = append_release_history({
+                    "version": version,
+                    "download_url": download_url,
+                    "sha256": sha256_hash,
+                    "release_date": release_date,
+                    "changelog": changelog,
+                    "file_name": out_name,
+                    "file_size": file_size,
+                })
+                return _json_response({
+                    "success": True,
+                    "config": config,
+                    "release": history_entry,
+                    "releases": list_release_history(),
+                    "storage": get_storage_usage(),
+                })
+
+            # ---- Path B: classic multipart (local / small files) ----
             if "multipart/form-data" not in ct:
-                return _json_response({"error": "Content-Type must be multipart/form-data"}, 400)
+                return _json_response({
+                    "error": "Content-Type must be multipart/form-data or application/json",
+                }, 400)
             m = re.search(r"boundary=([^\s;]+)", ct)
             if not m:
                 return _json_response({"error": "Missing multipart boundary"}, 400)
@@ -711,21 +1034,58 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
             if len(file_data) == 0:
                 return _json_response({"error": "Uploaded file is empty"}, 400)
 
+            storage = get_storage_usage()
+            if storage.get("level") == "critical":
+                projected = storage["total_bytes"] + len(file_data)
+                if projected > storage["soft_cap_bytes"]:
+                    return _json_response({
+                        "error": (
+                            "Release storage is full. Purge old builds before publishing. "
+                            + (storage.get("message") or "")
+                        ),
+                        "storage": storage,
+                    }, 507)
+
             sha256_hash = hashlib.sha256(file_data).hexdigest()
-            version = fields.get("version", "2.1.1").strip()
-            changelog = fields.get("changelog", "- Performance update").strip()
+            version = fields.get("version", "1.0.0").strip()
+            changelog = sanitize_changelog(fields.get("changelog", "- Performance update"))
+            if not changelog:
+                changelog = "- Performance update"
+            mandatory_raw = fields.get("mandatory", "true").strip().lower()
+            mandatory = mandatory_raw in ("1", "true", "yes", "on")
             out_name = f"PulseOptimizer_v{version}.exe"
             download_url = store_release_file(out_name, file_data)
+            release_date = datetime.date.today().isoformat()
+            file_size = len(file_data)
 
             config = load_config()
             config["version"] = version
             config["changelog"] = changelog
             config["download_url"] = download_url
             config["sha256"] = sha256_hash
-            config["release_date"] = datetime.date.today().isoformat()
+            config["release_date"] = release_date
+            config["file_size"] = file_size
+            config["mandatory"] = mandatory
             save_config(config)
-            return _json_response({"success": True, "config": config})
+
+            history_entry = append_release_history({
+                "version": version,
+                "download_url": download_url,
+                "sha256": sha256_hash,
+                "release_date": release_date,
+                "changelog": changelog,
+                "file_name": out_name,
+                "file_size": file_size,
+            })
+
+            return _json_response({
+                "success": True,
+                "config": config,
+                "release": history_entry,
+                "releases": list_release_history(),
+                "storage": get_storage_usage(),
+            })
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            return _json_response({"error": _safe_error(e)}, 500)
 
     return _json_response({"error": "Endpoint not found"}, 404)

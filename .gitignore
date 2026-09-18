@@ -6,11 +6,23 @@ __pycache__/
 .venv/
 venv/
 .vercel/
+.build-backup/
+
+# Never commit live secrets / license data
 data/sessions.json
 data/login_attempts.json
+data/storage_settings.json
+data/keys.json
+data/banned.json
+data/config.json
+data/releases.json
 data/logs/
 public/downloads/*.exe
 !.gitkeep
+
+# Built/minified output is regenerated on deploy; keep public/ copies for convenience
+# but prefer editing frontend/
+
 .DS_Store
 Thumbs.db
 *.log
