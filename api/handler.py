@@ -484,12 +484,20 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
         create_session(token, username, ip, SESSION_TTL_SECONDS)
 
         secure = os.environ.get("COOKIE_SECURE", "true").lower() != "false"
+        # SameSite=Lax is reliable for same-site fetch + top-level nav; Strict
+        # can drop the cookie in some browser/edge cases after login.
         cookie = (
             f"admin_session={token}; HttpOnly; Path=/; Max-Age={SESSION_TTL_SECONDS}; "
-            f"SameSite=Strict{'; Secure' if secure else ''}"
+            f"SameSite=Lax{'; Secure' if secure else ''}"
         )
         return _json_response(
-            {"success": True, "message": "Login successful"},
+            {
+                "success": True,
+                "message": "Login successful",
+                # Also return token so the SPA can send Authorization if cookies
+                # are blocked or stripped by the browser.
+                "token": token,
+            },
             200,
             {"Set-Cookie": cookie},
         )
@@ -498,7 +506,7 @@ def _handle_post(route: str, headers: dict, body: bytes, ip: str) -> tuple[int, 
         token = _extract_session_token(headers)
         if token:
             delete_session(token)
-        cookie = "admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict"
+        cookie = "admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax"
         return _json_response({"success": True}, 200, {"Set-Cookie": cookie})
 
     # ---- Public client auth APIs ----

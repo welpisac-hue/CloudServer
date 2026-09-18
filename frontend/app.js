@@ -5,12 +5,34 @@
 
 "use strict";
 
-/** Authenticated fetch â€” always send session cookies */
+const ADMIN_TOKEN_KEY = "pulse_admin_token";
+
+function getAdminToken() {
+  try {
+    return sessionStorage.getItem(ADMIN_TOKEN_KEY) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function setAdminToken(token) {
+  try {
+    if (token) sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch (_) { /* private mode / blocked storage */ }
+}
+
+/** Authenticated fetch — cookies + Bearer token fallback */
 async function apiFetch(url, options = {}) {
   const opts = { credentials: "include", ...options };
   opts.headers = { ...(options.headers || {}) };
+  const token = getAdminToken();
+  if (token && !opts.headers.Authorization && !opts.headers.authorization) {
+    opts.headers.Authorization = `Bearer ${token}`;
+  }
   const res = await fetch(url, opts);
   if (res.status === 401 && !String(url).includes("/api/admin/login") && !String(url).includes("/api/admin/session")) {
+    setAdminToken("");
     showLoginScreen("Session expired. Please sign in again.");
   }
   return res;
@@ -65,6 +87,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function showLoginScreen(message) {
   isAuthenticated = false;
+  setAdminToken("");
   const login = document.getElementById("login-screen");
   const app = document.getElementById("app-root");
   if (login) login.hidden = false;
@@ -113,6 +136,7 @@ function bindLogin() {
         err.textContent = data.error || "Invalid credentials";
         return;
       }
+      if (data.token) setAdminToken(data.token);
       document.getElementById("login-password").value = "";
       await enterAuthenticatedApp();
     } catch (ex) {
@@ -130,6 +154,7 @@ function bindLogin() {
       try {
         await apiFetch("/api/admin/logout", { method: "POST" });
       } catch (_) { /* ignore */ }
+      setAdminToken("");
       showLoginScreen();
     });
   }
